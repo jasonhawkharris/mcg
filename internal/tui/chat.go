@@ -24,6 +24,7 @@ func StartChat(db DBInterface, conversationID uuid.UUID, loadedMessages []Messag
 		NewChatModel(db, conversationID, loadedMessages),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
+		tea.WithMouseAllMotion(),  // Enable all mouse motion for text selection
 	)
 
 	_, err := p.Run()

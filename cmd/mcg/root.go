@@ -6,11 +6,15 @@ import (
 	"os"
 
 	"github.com/hawk/mcgraph/internal/db"
+	"github.com/hawk/mcgraph/internal/extensions"
 	"github.com/spf13/cobra"
 )
 
-// Global database connection
-var dbConn *db.DB
+// Global connections and managers
+var (
+	dbConn *db.DB
+	extManager *extensions.Manager
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "mcg",
@@ -18,7 +22,8 @@ var rootCmd = &cobra.Command{
 	Long:  `mcgraph is a CLI tool that can use multiple LLMs for coding assistance.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Skip database initialization for commands that don't need it
-		if cmd.Name() == "version" || cmd.Name() == "help" || cmd.Name() == "pick" || cmd.Name() == "llms" {
+		if cmd.Name() == "version" || cmd.Name() == "help" || cmd.Name() == "pick" || cmd.Name() == "llms" || 
+		   cmd.Name() == "ext" || cmd.Parent().Name() == "ext" {
 			return nil
 		}
 
@@ -67,4 +72,22 @@ func Execute() {
 
 func init() {
 	// Configure the root command
+	
+	// Initialize extension system
+	extConfig, err := extensions.LoadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to load extension configuration: %v\n", err)
+		// Create a default manager with extensions disabled
+		extManager = extensions.NewManager(false)
+	} else {
+		// Create manager based on configuration
+		extManager = extensions.NewManager(extConfig.Enabled)
+		
+		// Load extensions if enabled
+		if extConfig.Enabled {
+			if err := extManager.LoadExtensions(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Error loading extensions: %v\n", err)
+			}
+		}
+	}
 }

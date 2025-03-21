@@ -42,6 +42,9 @@ If used with the -i/--interactive flag, it will start an interactive chat sessio
 				return fmt.Errorf("error creating conversation: %w", err)
 			}
 			
+			// Set extension manager for the TUI to use
+			tui.SetExtensionManager(extManager)
+			
 			// Create a DB adapter and start the interactive TUI chat
 			dbAdapter := db.NewAdapter(dbConn)
 			return tui.StartChat(dbAdapter, conversation.ID, nil)

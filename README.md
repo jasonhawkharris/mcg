@@ -143,4 +143,12 @@ All history commands work with shortened IDs (first 8 characters) for convenienc
 
 ## Configuration
 
-The tool stores your LLM preference in `~/.mcgraph/config`. You can modify this directly or use the `pick` command.
+The tool stores your LLM preference in `~/.mcgraph/config`:
+
+- Your selected LLM persists between sessions
+- When starting a new chat, the previously selected LLM is automatically used
+- When continuing a conversation, the LLM used in that conversation is automatically selected
+- Use the `pick` command to switch between LLMs (e.g., `mcg pick claude`)
+- You can check your current LLM selection with `mcg llms`
+
+You can also modify the config file directly if needed.

@@ -114,7 +114,7 @@ func NewChatModel(db DBInterface, conversationID uuid.UUID, loadedMessages []Mes
 	} else {
 		// Add welcome message
 		currentLLM := llm.GetCurrentLLM()
-		welcomeMsg := fmt.Sprintf("Welcome to McGraph Chat! Current LLM: %s\nType your questions and press Enter to submit.\nType Ctrl+C to quit.", currentLLM)
+		welcomeMsg := fmt.Sprintf("Welcome to McGraph Chat! Current LLM: %s\nType your questions and press Enter to submit.\nPress Alt+Enter for a new line.\nType Ctrl+C to quit.", currentLLM)
 
 		messages = []Message{
 			{
@@ -189,7 +189,15 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		
 		case tea.KeyEnter:
-			if !m.waitingForResp {
+			// Check if Alt is pressed with Enter
+			if msg.Alt {
+				// Insert a newline on Alt+Enter
+				m.textarea.InsertString("\n")
+				return m, nil
+			}
+			
+			// Only handle regular Enter when not waiting for a response
+			if !m.waitingForResp && !m.typingActive {
 				// Only send if there's content
 				input := strings.TrimSpace(m.textarea.Value())
 				if input != "" {
@@ -215,6 +223,44 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						
 						// Generate summary
 						return m, m.getSummary()
+					} else if strings.HasPrefix(input, "/") && len(input) > 1 {
+						// This might be an extension command
+						m.textarea.Reset()
+						
+						// Parse the command: /extension command args...
+						parts := strings.SplitN(input[1:], " ", 3)
+						extName := parts[0]
+						
+						if extName == "help" {
+							// Show help for all extensions
+							return m, m.handleHelp()
+						}
+						
+						if len(parts) >= 2 {
+							cmdName := parts[1]
+							var args []string
+							
+							if len(parts) > 2 {
+								// Split the remaining part by spaces, respecting quotes
+								args = splitArgs(parts[2])
+							}
+							
+							// Execute the extension command
+							return m, m.executeExtensionCommand(extName, cmdName, args)
+						} else {
+							// Just an extension name without a command
+							m.messages = append(m.messages, Message{
+								Content:       fmt.Sprintf("Please specify a command for the '%s' extension. Type /help for available commands.", extName),
+								VisibleContent: fmt.Sprintf("Please specify a command for the '%s' extension. Type /help for available commands.", extName),
+								IsUser:        false,
+								Time:          time.Now(),
+								IsComplete:    true,
+								IsSystem:      true,
+							})
+							m.updateViewportContent()
+							m.viewport.GotoBottom()
+							return m, nil
+						}
 					}
 					
 					// Normal message flow
@@ -362,6 +408,49 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.typingActive = true
 			return m, typingAnimation()
 		}
+		
+	// Extension command response
+	case extCommandResponse:
+		m.waitingForResp = false
+		
+		var content string
+		if msg.err != nil {
+			// Format error message
+			content = fmt.Sprintf("Error executing command /%s %s: %v", msg.extName, msg.cmdName, msg.err)
+			
+			// Add as a system message
+			m.messages = append(m.messages, Message{
+				Content:       content,
+				VisibleContent: content, // Error messages show immediately
+				IsUser:        false,
+				IsSystem:      true,
+				Time:          time.Now(),
+				IsComplete:    true,
+			})
+		} else {
+			// Format the response
+			content = fmt.Sprintf("### Result of /%s %s\n\n%s", msg.extName, msg.cmdName, msg.response)
+			
+			// Add as a system message with typing animation
+			m.messages = append(m.messages, Message{
+				Content:       content,
+				VisibleContent: "", // Start empty for typing effect
+				IsUser:        false,
+				IsSystem:      true,
+				Time:          time.Now(),
+				IsComplete:    false,
+			})
+			
+			// Start the typing animation
+			m.typingActive = true
+			m.updateViewportContent()
+			m.viewport.GotoBottom()
+			return m, typingAnimation()
+		}
+		
+		// Update the viewport
+		m.updateViewportContent()
+		m.viewport.GotoBottom()
 	
 	// Handle spinner ticks while waiting
 	case spinner.TickMsg:
@@ -450,8 +539,12 @@ func (m ChatModel) View() string {
 		inputArea = fmt.Sprintf("%s %s", m.spinner.View(), thinkingText)
 	}
 	
+	// Add a status line with keyboard shortcuts
+	var statusLine string
+	statusLine = "\n[Ctrl+C: Quit | Alt+Enter: New Line]"
+	
 	// Put it all together
-	return fmt.Sprintf("%s\n\n%s", viewportContent, inputArea)
+	return fmt.Sprintf("%s\n\n%s%s", viewportContent, inputArea, statusLine)
 }
 
 // getResponse requests a response from the LLM
@@ -546,9 +639,117 @@ func (m *ChatModel) updateViewportContent() {
 		
 		// Add separator between messages, except for the last one
 		if i < len(m.messages)-1 {
-			sb.WriteString(strings.Repeat("─", m.width) + "\n\n")
+			sb.WriteString(strings.Repeat("-", m.width) + "\n\n")
 		}
 	}
 	
 	m.viewport.SetContent(sb.String())
+}
+
+// extCommandResponse represents a response from an extension command
+type extCommandResponse struct {
+	extName  string
+	cmdName  string
+	response string
+	err      error
+}
+
+// executeExtensionCommand executes a command from an extension
+func (m ChatModel) executeExtensionCommand(extName, cmdName string, args []string) tea.Cmd {
+	// No need to show an initial message, we'll replace it with the result anyway
+	_ = fmt.Sprintf("Running command: /%s %s %s", extName, cmdName, strings.Join(args, " "))
+	
+	// We pass the extension name and command name along with the response
+	// so we can format the output appropriately
+	return func() tea.Msg {
+		// Access the extension manager from the global variable
+		response, err := extManager.ExecuteCommand(extName, cmdName, args)
+		
+		return extCommandResponse{
+			extName:  extName,
+			cmdName:  cmdName,
+			response: response,
+			err:      err,
+		}
+	}
+}
+
+// handleHelp shows help information for all extensions
+func (m ChatModel) handleHelp() tea.Cmd {
+	return func() tea.Msg {
+		var helpText strings.Builder
+		
+		if !extManager.IsEnabled() {
+			helpText.WriteString("# Extensions are disabled\n\n")
+			helpText.WriteString("Extensions can be enabled using the command:\n")
+			helpText.WriteString("```\nmcg ext enable\n```\n\n")
+		} else {
+			helpText.WriteString("# Available Extension Commands\n\n")
+			
+			extensions := extManager.ListExtensions()
+			if len(extensions) == 0 {
+				helpText.WriteString("No extensions are installed.\n")
+				helpText.WriteString("Extensions should be placed in ~/.mcgraph/extensions/ as .so files.\n")
+			} else {
+				for _, ext := range extensions {
+					helpText.WriteString(fmt.Sprintf("## /%s - %s\n\n", ext.Name(), ext.Description()))
+					
+					commands := extManager.GetCommands(ext.Name())
+					if len(commands) == 0 {
+						helpText.WriteString("No commands available for this extension.\n\n")
+						continue
+					}
+					
+					for cmdName, cmd := range commands {
+						helpText.WriteString(fmt.Sprintf("- `/%s %s` - %s\n", ext.Name(), cmdName, cmd.Description()))
+					}
+					helpText.WriteString("\n")
+				}
+			}
+			
+			helpText.WriteString("## Built-in Commands\n\n")
+			helpText.WriteString("- `/summarize` - Generate a summary of the current conversation\n")
+			helpText.WriteString("- `/help` - Show this help message\n")
+			
+			// Add keyboard shortcuts
+			helpText.WriteString("\n## Keyboard Shortcuts\n\n")
+			helpText.WriteString("- `Alt+Enter` - Insert a new line in the input field\n")
+			helpText.WriteString("- `Ctrl+C` - Quit the application\n")
+		}
+		
+		// Return the help text as a system message
+		return extCommandResponse{
+			extName:  "help",
+			cmdName:  "help",
+			response: helpText.String(),
+			err:      nil,
+		}
+	}
+}
+
+// splitArgs splits a string into arguments, respecting quotes
+func splitArgs(s string) []string {
+	var args []string
+	var current strings.Builder
+	inQuotes := false
+	
+	for _, c := range s {
+		switch {
+		case c == '"' || c == '\'':
+			inQuotes = !inQuotes
+		case c == ' ' && !inQuotes:
+			if current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(c)
+		}
+	}
+	
+	if current.Len() > 0 {
+		args = append(args, current.String())
+	}
+	
+	return args
 }

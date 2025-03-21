@@ -111,6 +111,9 @@ var chatCmd = &cobra.Command{
 			conversationID = conversation.ID
 		}
 		
+		// Set extension manager for the TUI to use (needed for extension commands)
+		tui.SetExtensionManager(extManager)
+		
 		// Create a DB adapter and start the interactive TUI chat
 		dbAdapter := db.NewAdapter(dbConn)
 		return tui.StartChat(dbAdapter, conversationID, loadedMessages)

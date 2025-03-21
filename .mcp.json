@@ -1,0 +1,19 @@
+{
+  "codebase": {
+    "include": [
+      "**/*.go",
+      "**/*.md",
+      "go.mod",
+      "go.sum"
+    ],
+    "exclude": [
+      "**/vendor/**",
+      "**/node_modules/**",
+      "**/.git/**"
+    ]
+  },
+  "settings": {
+    "project_name": "McGraph",
+    "description": "Terminal-based chat application with LLM integration and extension system"
+  }
+}
